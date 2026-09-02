@@ -68,6 +68,11 @@ struct _GstGpacTransform
   /* Input Queue */
   GQueue* queue;
 
+  /* Deadline for the next aggregation, in running time.  Refreshed from the
+     clock on every aggregate() call so a sink pad with nothing to give cannot
+     hold the others back indefinitely. */
+  GstClockTime next_time;
+
   /* Sacrificial Buffer (for syncing) */
   GstBuffer* sync_buffer;
 };

@@ -665,6 +665,52 @@ request:
       agg, STREAM, FAILED, (NULL), ("Failed to push the force key unit event"));
 }
 
+// How long the element may wait for a sink pad that has nothing to give before
+// aggregating without it.  Deadline-based aggregation is computed from the
+// clock rather than from a media position: this element sinks data and has no
+// output position of its own to advance.
+#define GPAC_TF_AGGREGATE_DEADLINE (100 * GST_MSECOND)
+
+static GstClockTime
+gst_gpac_tf_running_time(GstAggregator* agg)
+{
+  GstClock* clock = gst_element_get_clock(GST_ELEMENT(agg));
+  GstClockTime now, base;
+
+  if (!clock)
+    return GST_CLOCK_TIME_NONE;
+
+  now = gst_clock_get_time(clock);
+  base = gst_element_get_base_time(GST_ELEMENT(agg));
+  gst_object_unref(clock);
+
+  if (!GST_CLOCK_TIME_IS_VALID(now) || !GST_CLOCK_TIME_IS_VALID(base) ||
+      now < base)
+    return GST_CLOCK_TIME_NONE;
+
+  return now - base;
+}
+
+static GstClockTime
+gst_gpac_tf_get_next_time(GstAggregator* agg)
+{
+  GstGpacTransform* gpac_tf = GST_GPAC_TF(GST_ELEMENT(agg));
+
+  // Without this the base class waits for a buffer on *every* pad before it
+  // aggregates, with no timeout, so the slowest producer sets the cadence for
+  // all of them.  A sparse subtitle track then starves audio and video: they
+  // fill their pads to the aggregator's per-pad capacity and their chains park
+  // until the next subtitle buffer arrives, after which everything queued is
+  // admitted at once.
+  if (!GST_CLOCK_TIME_IS_VALID(gpac_tf->next_time)) {
+    GstClockTime now = gst_gpac_tf_running_time(agg);
+    if (GST_CLOCK_TIME_IS_VALID(now))
+      gpac_tf->next_time = now + GPAC_TF_AGGREGATE_DEADLINE;
+  }
+
+  return gpac_tf->next_time;
+}
+
 static GstFlowReturn
 gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 {
@@ -681,6 +727,15 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
   }
 
   GST_DEBUG_OBJECT(agg, "Aggregating buffers");
+
+  // Move the deadline forward, whether this call came from the deadline or
+  // from every pad being ready.
+  {
+    GstClockTime now = gst_gpac_tf_running_time(agg);
+    gpac_tf->next_time = GST_CLOCK_TIME_IS_VALID(now)
+                           ? now + GPAC_TF_AGGREGATE_DEADLINE
+                           : GST_CLOCK_TIME_NONE;
+  }
 
   // Create the temporary queue
   GQueue* queue = g_queue_new();
@@ -791,8 +846,17 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 
   // Check if we have any packets to send
   if (g_queue_is_empty(queue)) {
-    GST_DEBUG_OBJECT(agg, "No packets to send, returning EOS");
     g_queue_free(queue);
+
+    // A deadline-driven pass finding nothing means the pads that were empty
+    // are still empty — not that the stream ended.  Only a pass the base class
+    // scheduled because every pad was ready can conclude EOS.
+    if (timeout) {
+      GST_DEBUG_OBJECT(agg, "No packets to send at the deadline, waiting");
+      return GST_FLOW_OK;
+    }
+
+    GST_DEBUG_OBJECT(agg, "No packets to send, returning EOS");
     return GST_FLOW_EOS;
   }
 
@@ -1102,6 +1166,7 @@ gst_gpac_tf_init(GstGpacTransform* tf)
 {
   gst_gpac_tf_reset(tf);
   tf->queue = g_queue_new();
+  tf->next_time = GST_CLOCK_TIME_NONE;
 }
 
 static void
@@ -1123,6 +1188,8 @@ gst_gpac_tf_class_init(GstGpacTransformClass* klass)
   // Set the aggregator functions
   gstaggregator_class->sink_event = GST_DEBUG_FUNCPTR(gst_gpac_tf_sink_event);
   gstaggregator_class->aggregate = GST_DEBUG_FUNCPTR(gst_gpac_tf_aggregate);
+  gstaggregator_class->get_next_time =
+    GST_DEBUG_FUNCPTR(gst_gpac_tf_get_next_time);
   gstaggregator_class->negotiated_src_caps =
     GST_DEBUG_FUNCPTR(gst_gpac_tf_negotiated_src_caps);
   gstaggregator_class->start = GST_DEBUG_FUNCPTR(gst_gpac_tf_start);
