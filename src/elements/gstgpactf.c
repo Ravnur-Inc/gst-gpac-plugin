@@ -727,6 +727,26 @@ gst_gpac_tf_get_next_time(GstAggregator* agg)
   return deadline;
 }
 
+static gboolean
+gst_gpac_tf_pad_is_eos(GstElement* element, GstPad* pad, gpointer user_data)
+{
+  gboolean* all_eos = user_data;
+  if (!gst_aggregator_pad_is_eos(GST_AGGREGATOR_PAD(pad))) {
+    *all_eos = FALSE;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static gboolean
+gst_gpac_tf_all_pads_eos(GstAggregator* agg)
+{
+  gboolean all_eos = TRUE;
+  gst_element_foreach_sink_pad(
+    GST_ELEMENT(agg), gst_gpac_tf_pad_is_eos, &all_eos);
+  return all_eos;
+}
+
 static GstFlowReturn
 gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 {
@@ -861,11 +881,11 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
   if (g_queue_is_empty(queue)) {
     g_queue_free(queue);
 
-    // A deadline-driven pass finding nothing means the pads that were empty
-    // are still empty — not that the stream ended.  Only a pass the base class
-    // scheduled because every pad was ready can conclude EOS.
-    if (timeout) {
-      GST_DEBUG_OBJECT(agg, "No packets to send at the deadline, waiting");
+    // Finding nothing means the stream ended only once every pad is at EOS:
+    // a deadline-driven pass sees the pads that were empty still empty, and a
+    // pass over ready pads may have consumed nothing but gap buffers.
+    if (!gst_gpac_tf_all_pads_eos(agg)) {
+      GST_DEBUG_OBJECT(agg, "No packets to send, waiting");
       return GST_FLOW_OK;
     }
 
