@@ -21,6 +21,13 @@ The `gpactf` element is an aggregator element that runs the incoming buffers thr
 > [!NOTE]
 > You can assume that source and sink filters are already present in the graph. You will be populating the graph in between these two filters.
 
+#### Live sources with sparse tracks
+
+Like any `GstAggregator`, the element waits for a buffer on every sink pad before it aggregates. A sparse track — live captions, for example — can leave its pad empty for seconds, and the other tracks then wait for it inside the element. These options, available on every `gpactf` based element and on `gpacsink`, let such a track run alongside audio and video:
+
+- **`aggregation-deadline`** (milliseconds, default `0`): in a live pipeline, aggregate whatever the sink pads hold once this long (wall-clock time) has passed since the last aggregation, instead of waiting for a buffer on every pad. `0` waits for every pad.
+
+
 ### `gpacmp4mx` element
 
 Functions similarly to `gpactf` element, you can assume it's equivalent to `gpactf graph=mp4mx`. Only difference is on how the element is configured. You can use the element options to set the `mp4mx` configuration.
