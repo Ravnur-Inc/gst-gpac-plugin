@@ -296,3 +296,61 @@ TEST_F(GstTestFixture, WebVttCueTextCannotBreakTheCue)
     << vtt;
   EXPECT_EQ(ParseCues(vtt).size(), 1u) << vtt;
 }
+
+TEST_F(GstTestFixture, VttCueSettingsGivenToEveryCue)
+{
+  SparseTextPipeline sparse(
+    pipeline, 3, "dasher:segdur=1.0:dmode=dynamic:rawsub=true");
+  g_object_set(sparse.sink,
+               "aggregation-deadline",
+               100,
+               "webvtt-samples",
+               TRUE,
+               "vtt-cue-settings",
+               "align:left position:10% line:-2",
+               NULL);
+  this->StartPipeline();
+
+  sparse.PushText("one", 200 * GST_MSECOND, 600 * GST_MSECOND);
+  sparse.PushGap(800 * GST_MSECOND, 700 * GST_MSECOND);
+  sparse.PushText("two", 1500 * GST_MSECOND, GST_SECOND);
+  sparse.PushGap(2500 * GST_MSECOND, 500 * GST_MSECOND);
+  g_usleep(3 * G_USEC_PER_SEC);
+  sparse.EndText();
+  this->WaitForEOS();
+
+  std::string vtt = sparse.Text();
+  auto cues = ParseCues(vtt);
+  EXPECT_GE(cues.size(), 2u) << vtt;
+  for (auto& [timing, text] : cues)
+    EXPECT_NE(timing.find(" align:left position:10% line:-2"),
+              std::string::npos)
+      << timing;
+}
+
+TEST_F(GstTestFixture, VttCueSettingsCannotBreakTheTimingLine)
+{
+  GstElement* sink = gst_element_factory_make("gpacsink", NULL);
+  gchar* settings = NULL;
+
+  // A line break or "-->" would end the timing line: such settings are
+  // refused, and the settings set before stay
+  g_object_set(sink, "vtt-cue-settings", "line:-2", NULL);
+  g_object_set(sink, "vtt-cue-settings", "line:-2\nalign:left", NULL);
+  g_object_get(sink, "vtt-cue-settings", &settings, NULL);
+  EXPECT_STREQ(settings, "line:-2");
+  g_free(settings);
+
+  g_object_set(sink, "vtt-cue-settings", "align:left --> line:-2", NULL);
+  g_object_get(sink, "vtt-cue-settings", &settings, NULL);
+  EXPECT_STREQ(settings, "line:-2");
+  g_free(settings);
+
+  // And they can be cleared
+  g_object_set(sink, "vtt-cue-settings", NULL, NULL);
+  g_object_get(sink, "vtt-cue-settings", &settings, NULL);
+  EXPECT_EQ(settings, nullptr);
+  g_free(settings);
+
+  gst_object_unref(sink);
+}

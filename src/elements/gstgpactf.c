@@ -108,6 +108,7 @@ gst_gpac_tf_pad_finalize(GObject* object)
       gst_tag_list_unref(priv->tags);
     if (priv->gpac_caps)
       g_list_free_full(priv->gpac_caps, (GDestroyNotify)g_free);
+    g_free(priv->vtt_cue_settings);
     g_free(priv);
     gst_pad_set_element_private(GST_PAD(pad), NULL);
   }
@@ -146,7 +147,14 @@ gst_gpac_tf_set_property(GObject* object,
 {
   GstGpacTransform* gpac_tf = GST_GPAC_TF(object);
   g_return_if_fail(GST_IS_GPAC_TF(object));
-  if (gpac_set_property(GPAC_PROP_CTX(GPAC_CTX), prop_id, value, pspec))
+
+  // Under the object lock: the streaming thread copies the string properties
+  // it uses (vtt-cue-settings) under it
+  GST_OBJECT_LOCK(object);
+  gboolean handled =
+    gpac_set_property(GPAC_PROP_CTX(GPAC_CTX), prop_id, value, pspec);
+  GST_OBJECT_UNLOCK(object);
+  if (handled)
     return;
 
   // Handle the element properties
@@ -177,7 +185,11 @@ gst_gpac_tf_get_property(GObject* object,
 {
   GstGpacTransform* gpac_tf = GST_GPAC_TF(object);
   g_return_if_fail(GST_IS_GPAC_TF(object));
-  if (gpac_get_property(GPAC_PROP_CTX(GPAC_CTX), prop_id, value, pspec))
+  GST_OBJECT_LOCK(object);
+  gboolean handled =
+    gpac_get_property(GPAC_PROP_CTX(GPAC_CTX), prop_id, value, pspec);
+  GST_OBJECT_UNLOCK(object);
+  if (handled)
     return;
 
   // Handle the element properties
@@ -239,12 +251,18 @@ gpac_prepare_pids(GstElement* element)
           // Share the pad private data
           gf_filter_pid_set_udta(pid, priv);
 
-          // How text reaches GPAC is decided by the element's property, once
-          // per PID: its codec, framing and decoder configuration follow it
+          // How text reaches GPAC is decided by the element's properties,
+          // once per PID: its codec, framing and decoder configuration follow
+          // them, and the copy cannot be freed by a later property change
+          GST_OBJECT_LOCK(element);
           priv->webvtt_samples =
             GPAC_PROP_CTX(GPAC_CTX)->webvtt_samples &&
             GST_PAD_PAD_TEMPLATE(pad) ==
               gst_gpac_get_sink_template(GPAC_TEMPLATE_SUBTITLE);
+          if (priv->webvtt_samples)
+            priv->vtt_cue_settings =
+              g_strdup(GPAC_PROP_CTX(GPAC_CTX)->vtt_cue_settings);
+          GST_OBJECT_UNLOCK(element);
         }
 
         if (priv->flags) {
@@ -781,15 +799,15 @@ gst_gpac_tf_cue_payload(const guint8* data, gsize size)
 
 // With `webvtt-samples`, wraps a text buffer into a WebVTT sample as stored in
 // ISOBMFF (ISO/IEC 14496-30): a buffer of text becomes a cue box (vttc) that
-// holds the text (payl); a gap buffer, or a buffer with no text, becomes an
-// empty sample (vtte) over its duration.
+// holds the text (payl) and, when given, the cue settings (sttg); a gap buffer,
+// or a buffer with no text, becomes an empty sample (vtte) over its duration.
 // The empty sample lets GPAC know that the text track has advanced although no
 // cue is shown: GPAC's dasher closes a text segment only on a sample at or past
 // the segment's end, and a gap buffer would otherwise never reach it. GPAC
 // writes no cue for an empty sample. Returns NULL for a buffer without a
 // duration that carries no text.
 static GstBuffer*
-gst_gpac_tf_text_to_webvtt(GstBuffer* buffer)
+gst_gpac_tf_text_to_webvtt(GstBuffer* buffer, const gchar* settings)
 {
   GstBuffer* sample;
   g_autoptr(GString) text = NULL;
@@ -813,12 +831,21 @@ gst_gpac_tf_text_to_webvtt(GstBuffer* buffer)
   } else {
     gsize text_size = text->len;
 
+    gsize settings_len = settings && *settings ? strlen(settings) : 0;
+    gsize sttg_size = settings_len ? 8 + settings_len : 0;
     gsize payl_size = 8 + text_size;
-    gsize size = 8 + payl_size;
+    gsize size = 8 + sttg_size + payl_size;
     guint8* data = g_malloc(size);
-    gst_gpac_tf_write_box_header(data, size, "vttc");
-    gst_gpac_tf_write_box_header(data + 8, payl_size, "payl");
-    memcpy(data + 16, text->str, text_size);
+    guint8* box = data;
+    gst_gpac_tf_write_box_header(box, size, "vttc");
+    box += 8;
+    if (sttg_size) {
+      gst_gpac_tf_write_box_header(box, sttg_size, "sttg");
+      memcpy(box + 8, settings, settings_len);
+      box += sttg_size;
+    }
+    gst_gpac_tf_write_box_header(box, payl_size, "payl");
+    memcpy(box + 8, text->str, text_size);
     sample = gst_buffer_new_wrapped(data, size);
   }
 
@@ -907,7 +934,8 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 
           // WebVTT samples for the text track, gaps included
           if (priv->webvtt_samples) {
-            GstBuffer* sample = gst_gpac_tf_text_to_webvtt(buffer);
+            GstBuffer* sample =
+              gst_gpac_tf_text_to_webvtt(buffer, priv->vtt_cue_settings);
             gst_buffer_unref(buffer);
             buffer = sample;
             if (!buffer)
@@ -1291,6 +1319,7 @@ gst_gpac_tf_finalize(GObject* object)
   // Free the properties
   g_list_free(ctx->properties);
   ctx->properties = NULL;
+  g_clear_pointer(&ctx->vtt_cue_settings, g_free);
 
   if (ctx->props_as_argv) {
     for (u32 i = 0; ctx->props_as_argv[i]; i++)
@@ -1367,6 +1396,7 @@ gst_gpac_tf_subclass_init(GstGpacTransformClass* klass)
                                 GPAC_PROP_PRINT_STATS,
                                 GPAC_PROP_AGGREGATION_DEADLINE,
                                 GPAC_PROP_WEBVTT_SAMPLES,
+                                GPAC_PROP_VTT_CUE_SETTINGS,
                                 GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates

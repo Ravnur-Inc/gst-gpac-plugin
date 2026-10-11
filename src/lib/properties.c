@@ -26,6 +26,7 @@
 #include "lib/properties.h"
 #include "gpacmessages.h"
 #include <gpac/filters.h>
+#include <string.h>
 
 typedef struct
 {
@@ -141,6 +142,20 @@ gpac_install_local_properties(GObjectClass* gobject_class,
             "empty sample for every GAP, so that the text track advances while "
             "no cue is shown. Applies to PIDs created after it is set",
             FALSE,
+            G_PARAM_READWRITE));
+        break;
+
+      case GPAC_PROP_VTT_CUE_SETTINGS:
+        g_object_class_install_property(
+          gobject_class,
+          prop,
+          g_param_spec_string(
+            "vtt-cue-settings",
+            "WebVTT Cue Settings",
+            "WebVTT cue settings given to every cue sent with webvtt-samples, "
+            "for example \"align:left position:10% line:-2\". Applies to "
+            "PIDs created after it is set",
+            NULL,
             G_PARAM_READWRITE));
         break;
 
@@ -363,6 +378,21 @@ gpac_set_property(GPAC_PropertyContext* ctx,
       case GPAC_PROP_WEBVTT_SAMPLES:
         ctx->webvtt_samples = g_value_get_boolean(value);
         break;
+      case GPAC_PROP_VTT_CUE_SETTINGS: {
+        // The settings go on the cue's timing line: a line break or "-->"
+        // would end it and corrupt the WebVTT output
+        const gchar* settings = g_value_get_string(value);
+        if (settings &&
+            (strpbrk(settings, "\r\n") || strstr(settings, "-->"))) {
+          GST_WARNING("Ignoring vtt-cue-settings with a line break or "
+                      "\"-->\", keeping the previous value: \"%s\"",
+                      settings);
+          break;
+        }
+        g_free(ctx->vtt_cue_settings);
+        ctx->vtt_cue_settings = g_strdup(settings);
+        break;
+      }
       case GPAC_PROP_DESTINATION:
         g_free(ctx->destination);
         ctx->destination = g_value_dup_string(value);
@@ -444,6 +474,9 @@ gpac_get_property(GPAC_PropertyContext* ctx,
         break;
       case GPAC_PROP_WEBVTT_SAMPLES:
         g_value_set_boolean(value, ctx->webvtt_samples);
+        break;
+      case GPAC_PROP_VTT_CUE_SETTINGS:
+        g_value_set_string(value, ctx->vtt_cue_settings);
         break;
       case GPAC_PROP_DESTINATION:
         g_value_set_string(value, ctx->destination);
