@@ -240,6 +240,12 @@ gpac_prepare_pids(GstElement* element)
           gf_filter_pid_set_udta(pid, priv);
         }
 
+        // How text reaches GPAC is decided by the element's property
+        priv->webvtt_samples =
+          GPAC_PROP_CTX(GPAC_CTX)->webvtt_samples &&
+          gst_pad_get_pad_template(pad) ==
+            gst_gpac_get_sink_template(GPAC_TEMPLATE_SUBTITLE);
+
         if (priv->flags) {
           if (G_UNLIKELY(!gpac_pid_reconfigure(element, priv, pid))) {
             GST_ELEMENT_ERROR(
@@ -727,6 +733,64 @@ gst_gpac_tf_get_next_time(GstAggregator* agg)
   return deadline;
 }
 
+// With `webvtt-samples`, wraps a text buffer into a WebVTT sample as stored in
+// ISOBMFF (ISO/IEC 14496-30): a buffer of text becomes a cue box (vttc) that
+// holds the text (payl), and a gap buffer with a duration becomes an empty
+// sample (vtte). The empty sample lets GPAC know that the text track has
+// advanced although no cue is shown: GPAC's dasher closes a text segment only
+// on a sample at or past the segment's end, and a gap buffer would otherwise
+// never reach it. GPAC writes no cue for an empty sample. Returns NULL for a
+// buffer that carries nothing for GPAC (a gap without a duration, or no text).
+static void
+gst_gpac_tf_write_box_header(guint8* data, gsize size, const char* type)
+{
+  GST_WRITE_UINT32_BE(data, (guint32)size);
+  memcpy(data + 4, type, 4);
+}
+
+static GstBuffer*
+gst_gpac_tf_text_to_webvtt(GstBuffer* buffer)
+{
+  GstBuffer* sample;
+
+  if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_GAP)) {
+    if (!GST_BUFFER_DURATION_IS_VALID(buffer) || !GST_BUFFER_DURATION(buffer))
+      return NULL;
+    guint8* data = g_malloc(8);
+    gst_gpac_tf_write_box_header(data, 8, "vtte");
+    sample = gst_buffer_new_wrapped(data, 8);
+  } else {
+    g_auto(GstBufferMapInfo) map = GST_MAP_INFO_INIT;
+    if (!gst_buffer_map(buffer, &map, GST_MAP_READ))
+      return NULL;
+
+    // The payload box carries the text without a terminating NUL
+    gsize text_size = map.size;
+    while (text_size && map.data[text_size - 1] == '\0')
+      text_size--;
+    if (!text_size)
+      return NULL;
+
+    gsize payl_size = 8 + text_size;
+    gsize size = 8 + payl_size;
+    guint8* data = g_malloc(size);
+    gst_gpac_tf_write_box_header(data, size, "vttc");
+    gst_gpac_tf_write_box_header(data + 8, payl_size, "payl");
+    memcpy(data + 16, map.data, text_size);
+    sample = gst_buffer_new_wrapped(data, size);
+  }
+
+  gst_buffer_copy_into(sample,
+                       buffer,
+                       GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                         GST_BUFFER_COPY_META,
+                       0,
+                       -1);
+  GST_BUFFER_FLAG_UNSET(sample, GST_BUFFER_FLAG_GAP);
+  GST_BUFFER_FLAG_UNSET(sample, GST_BUFFER_FLAG_DROPPABLE);
+  return sample;
+}
+
 static GstFlowReturn
 gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 {
@@ -778,6 +842,15 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 
           // We found at least one buffer, continue the outer loop
           has_buffers = TRUE;
+
+          // WebVTT samples for the text track, gaps included
+          if (priv->webvtt_samples) {
+            GstBuffer* sample = gst_gpac_tf_text_to_webvtt(buffer);
+            gst_buffer_unref(buffer);
+            buffer = sample;
+            if (!buffer)
+              goto next;
+          }
 
           // Skip droppable/gap buffers
           if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_GAP)) {
@@ -1231,6 +1304,7 @@ gst_gpac_tf_subclass_init(GstGpacTransformClass* klass)
   gpac_install_local_properties(gobject_class,
                                 GPAC_PROP_PRINT_STATS,
                                 GPAC_PROP_AGGREGATION_DEADLINE,
+                                GPAC_PROP_WEBVTT_SAMPLES,
                                 GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates

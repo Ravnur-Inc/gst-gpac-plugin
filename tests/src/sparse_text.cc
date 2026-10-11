@@ -176,3 +176,54 @@ TEST_F(GstTestFixture, AggregationDeadlineWithSilentTextPad)
   sparse.EndText();
   this->WaitForEOS();
 }
+
+// Every "-->" timing line of a WebVTT document, with the line that follows it
+static std::vector<std::pair<std::string, std::string>>
+ParseCues(const std::string& vtt)
+{
+  std::vector<std::pair<std::string, std::string>> cues;
+  gchar** lines = g_strsplit(vtt.c_str(), "\n", -1);
+  for (int i = 0; lines[i]; i++) {
+    if (strstr(lines[i], "-->"))
+      cues.emplace_back(lines[i], lines[i + 1] ? lines[i + 1] : "");
+  }
+  g_strfreev(lines);
+  return cues;
+}
+
+TEST_F(GstTestFixture, WebVttSamplesCarryCuesAndGaps)
+{
+  SparseTextPipeline sparse(
+    pipeline, 5, "dasher:segdur=1.0:dmode=dynamic:rawsub=true");
+  g_object_set(sparse.sink,
+               "aggregation-deadline",
+               100,
+               "webvtt-samples",
+               TRUE,
+               NULL);
+  this->StartPipeline();
+
+  // Two cues, the time between and after them covered by gaps
+  sparse.PushGap(0, 500 * GST_MSECOND);
+  sparse.PushText("hello", 500 * GST_MSECOND, GST_SECOND);
+  for (int i = 0; i < 17; i++)
+    sparse.PushGap(1500 * GST_MSECOND + i * 100 * GST_MSECOND,
+                   100 * GST_MSECOND);
+  sparse.PushText("world", 3200 * GST_MSECOND, GST_SECOND);
+  sparse.PushGap(4200 * GST_MSECOND, 800 * GST_MSECOND);
+
+  // End the text track with the video, as a live caption track does
+  g_usleep(5 * G_USEC_PER_SEC);
+  sparse.EndText();
+  this->WaitForEOS();
+
+  // Both cues, and nothing from the gaps: no cue without text
+  std::string vtt = sparse.Text();
+  EXPECT_NE(vtt.find("hello"), std::string::npos) << vtt;
+  EXPECT_NE(vtt.find("world"), std::string::npos) << vtt;
+  for (auto& [timing, text] : ParseCues(vtt))
+    EXPECT_FALSE(text.empty()) << "empty cue at " << timing << "\n" << vtt;
+
+  // The text track is segmented all the way, not only up to the last cue
+  EXPECT_GE(sparse.TextSegments(), 5);
+}

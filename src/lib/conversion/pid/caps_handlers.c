@@ -113,7 +113,8 @@ CAPS_HANDLER_SIGNATURE(codec_id)
     size_t offset = 2;
     // Subtitle doesn't have "raw" codec
     if (!g_strcmp0(media, "text") && !g_strcmp0(codec, "x-raw")) {
-      codec_id = GF_CODECID_SIMPLE_TEXT;
+      codec_id =
+        priv->webvtt_samples ? GF_CODECID_WEBVTT : GF_CODECID_SIMPLE_TEXT;
       goto finish;
     }
 
@@ -166,8 +167,9 @@ CAPS_HANDLER_SIGNATURE(unframed)
   } else if (!g_strcmp0(media, "audio")) {
     gst_structure_get_boolean(structure, "framed", &framed);
   } else if (!g_strcmp0(media, "text")) {
-    // For text media we assume unframed data
-    framed = FALSE;
+    // For text media we assume unframed data, except for the WebVTT samples
+    // the element builds itself: one complete sample per buffer
+    framed = priv->webvtt_samples;
   }
 
   //* For AVC, HEVC, AV1, etc. our caps always ask for streams with start codes.
@@ -317,6 +319,15 @@ CAPS_HANDLER_SIGNATURE(decoder_config)
   SKIP_IF_SET(GF_PROP_PID_DECODER_CONFIG);
 
   GstStructure* structure = gst_caps_get_structure(priv->caps, 0);
+
+  // WebVTT samples: the configuration is the WebVTT file header
+  if (priv->webvtt_samples && gst_structure_has_name(structure, "text/x-raw")) {
+    static const char header[] = "WEBVTT";
+    u8* data = (u8*)g_malloc0(sizeof(header));
+    memcpy(data, header, sizeof(header));
+    SET_PROP(GF_PROP_PID_DECODER_CONFIG, PROP_CONST_DATA(data, sizeof(header)));
+    return TRUE;
+  }
 
   // Get the codec data
   const GValue* codec_data = gst_structure_get_value(structure, "codec_data");
