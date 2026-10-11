@@ -159,6 +159,21 @@ gpac_install_local_properties(GObjectClass* gobject_class,
             G_PARAM_READWRITE));
         break;
 
+      case GPAC_PROP_DRAIN_GAPS:
+        g_object_class_install_property(
+          gobject_class,
+          prop,
+          g_param_spec_boolean(
+            "drain-gaps",
+            "Drain GAPs",
+            "Turn every GAP event into its gap buffer as soon as it arrives, "
+            "so that one aggregation consumes all the GAPs a pad holds. "
+            "Without it the GAPs queued on a pad are converted one per "
+            "aggregation",
+            FALSE,
+            G_PARAM_READWRITE));
+        break;
+
       case GPAC_PROP_DESTINATION:
         g_object_class_install_property(
           gobject_class,
@@ -393,6 +408,9 @@ gpac_set_property(GPAC_PropertyContext* ctx,
         ctx->vtt_cue_settings = g_strdup(settings);
         break;
       }
+      case GPAC_PROP_DRAIN_GAPS:
+        ctx->drain_gaps = g_value_get_boolean(value);
+        break;
       case GPAC_PROP_DESTINATION:
         g_free(ctx->destination);
         ctx->destination = g_value_dup_string(value);
@@ -477,6 +495,9 @@ gpac_get_property(GPAC_PropertyContext* ctx,
         break;
       case GPAC_PROP_VTT_CUE_SETTINGS:
         g_value_set_string(value, ctx->vtt_cue_settings);
+        break;
+      case GPAC_PROP_DRAIN_GAPS:
+        g_value_set_boolean(value, ctx->drain_gaps);
         break;
       case GPAC_PROP_DESTINATION:
         g_value_set_string(value, ctx->destination);

@@ -354,3 +354,39 @@ TEST_F(GstTestFixture, VttCueSettingsCannotBreakTheTimingLine)
 
   gst_object_unref(sink);
 }
+
+TEST_F(GstTestFixture, DrainGapsHandsAQueuedBurstToGpacAtOnce)
+{
+  SparseTextPipeline sparse(
+    pipeline, 5, "dasher:segdur=1.0:dmode=dynamic:rawsub=true");
+  g_object_set(sparse.sink,
+               "aggregation-deadline",
+               100,
+               "webvtt-samples",
+               TRUE,
+               "drain-gaps",
+               TRUE,
+               NULL);
+  this->StartPipeline();
+
+  // A cue, then 4 s of text track progress as a burst of short GAPs, queued
+  // at once. Without drain-gaps one GAP is converted per aggregation (about
+  // 40 a second here), so after 2.5 s the text track has advanced about 1 s
+  // and its segments lag the video's; with it the whole burst reaches GPAC
+  // in one aggregation.
+  sparse.PushText("burst", 0, 500 * GST_MSECOND);
+  for (int i = 0; i < 350; i++)
+    sparse.PushGap(500 * GST_MSECOND + i * 10 * GST_MSECOND,
+                   10 * GST_MSECOND);
+  g_usleep(2500 * 1000);
+  EXPECT_GE(sparse.TextSegments(), 2);
+
+  g_usleep(2500 * 1000);
+  sparse.EndText();
+  this->WaitForEOS();
+
+  // The burst carries no cue of its own
+  std::string vtt = sparse.Text();
+  for (auto& [timing, text] : ParseCues(vtt))
+    EXPECT_EQ(text, "burst") << timing << "\n" << vtt;
+}
