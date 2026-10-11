@@ -306,7 +306,11 @@ gpac_set_property(GPAC_PropertyContext* ctx,
                   const GValue* value,
                   GParamSpec* pspec)
 {
-  if (g_param_value_defaults(pspec, value))
+  // A filter or global option left at its default is not passed to GPAC. The
+  // element's own properties are always stored, so that setting one back to
+  // its default takes effect.
+  if ((IS_FILTER_PROPERTY(property_id) || IS_GLOBAL_PROPERTY(property_id)) &&
+      g_param_value_defaults(pspec, value))
     return TRUE;
 
   if (IS_TOP_LEVEL_PROPERTY(property_id)) {
