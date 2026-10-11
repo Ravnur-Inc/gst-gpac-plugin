@@ -258,3 +258,36 @@ TEST_F(GstTestFixture, VttCueSettingsGivenToEveryCue)
               std::string::npos)
       << timing;
 }
+
+TEST_F(GstTestFixture, DrainGapsKeepsCuesInOrder)
+{
+  SparseTextPipeline sparse(
+    pipeline, 4, "dasher:segdur=1.0:dmode=dynamic:rawsub=true");
+  g_object_set(sparse.sink,
+               "aggregation-deadline",
+               100,
+               "webvtt-samples",
+               TRUE,
+               "drain-gaps",
+               TRUE,
+               NULL);
+  this->StartPipeline();
+
+  // A burst of short GAPs around one cue, queued long before they are due
+  for (int i = 0; i < 30; i++)
+    sparse.PushGap(i * 50 * GST_MSECOND, 50 * GST_MSECOND);
+  sparse.PushText("burst", 1500 * GST_MSECOND, GST_SECOND);
+  for (int i = 0; i < 30; i++)
+    sparse.PushGap(2500 * GST_MSECOND + i * 50 * GST_MSECOND,
+                   50 * GST_MSECOND);
+  g_usleep(4 * G_USEC_PER_SEC);
+  sparse.EndText();
+  this->WaitForEOS();
+
+  std::string vtt = sparse.Text();
+  auto cues = ParseCues(vtt);
+  EXPECT_GE(cues.size(), 1u) << vtt;
+  for (auto& [timing, text] : cues)
+    EXPECT_EQ(text, "burst") << timing << "\n" << vtt;
+  EXPECT_GE(sparse.TextSegments(), 3);
+}

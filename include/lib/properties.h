@@ -36,6 +36,7 @@ typedef struct
   guint aggregation_deadline_ms;
   gboolean webvtt_samples;
   gchar* vtt_cue_settings;
+  gboolean drain_gaps;
   gchar* destination;
   GList* properties;
   GList* blacklist;
@@ -57,6 +58,7 @@ typedef enum
   GPAC_PROP_AGGREGATION_DEADLINE,
   GPAC_PROP_WEBVTT_SAMPLES,
   GPAC_PROP_VTT_CUE_SETTINGS,
+  GPAC_PROP_DRAIN_GAPS,
 
   // Element-specific properties
   GPAC_PROP_ELEMENT_OFFSET,

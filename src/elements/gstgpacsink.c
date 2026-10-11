@@ -213,6 +213,7 @@ gst_gpac_sink_subclass_init(GstGpacSinkClass* klass)
     GPAC_PROP_AGGREGATION_DEADLINE,
     GPAC_PROP_WEBVTT_SAMPLES,
     GPAC_PROP_VTT_CUE_SETTINGS,
+    GPAC_PROP_DRAIN_GAPS,
     GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates

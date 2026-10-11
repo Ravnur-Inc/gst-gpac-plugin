@@ -463,6 +463,60 @@ error:
   return GST_FLOW_ERROR;
 }
 
+// With `drain-gaps`, turns a GAP event into its gap buffer before it is queued.
+// The base class queues GAP events and converts only the oldest one between
+// two aggregations: once its gap buffer is consumed, the next GAP makes the pad
+// read empty for the rest of that aggregation, so GAPs that arrive faster than
+// aggregations pile up. Chained as a buffer, each GAP keeps its place in the
+// queue and one aggregation drains them all. The conversion is the base
+// class's own, against the segment the pad has received.
+static GstFlowReturn
+gst_gpac_tf_sink_event_pre_queue(GstAggregator* agg,
+                                 GstAggregatorPad* pad,
+                                 GstEvent* event)
+{
+  GstGpacTransform* gpac_tf = GST_GPAC_TF(GST_ELEMENT(agg));
+  if (!GPAC_PROP_CTX(GPAC_CTX)->drain_gaps ||
+      GST_EVENT_TYPE(event) != GST_EVENT_GAP)
+    return GST_AGGREGATOR_CLASS(parent_class)
+      ->sink_event_pre_queue(agg, pad, event);
+
+  GstEvent* segment_event =
+    gst_pad_get_sticky_event(GST_PAD(pad), GST_EVENT_SEGMENT, 0);
+  if (!segment_event)
+    return GST_AGGREGATOR_CLASS(parent_class)
+      ->sink_event_pre_queue(agg, pad, event);
+
+  const GstSegment* segment;
+  gst_event_parse_segment(segment_event, &segment);
+
+  GstClockTime pts, duration, end;
+  GstGapFlags flags = 0;
+  gst_event_parse_gap(event, &pts, &duration);
+  gst_event_parse_gap_flags(event, &flags);
+  end =
+    GST_CLOCK_TIME_IS_VALID(duration) ? pts + duration : GST_CLOCK_TIME_NONE;
+
+  gboolean in_segment =
+    segment->format == GST_FORMAT_TIME &&
+    gst_segment_clip(segment, GST_FORMAT_TIME, pts, end, &pts, &end);
+  gst_event_unref(segment_event);
+  gst_event_unref(event);
+  if (!in_segment)
+    return GST_FLOW_OK;
+
+  GstBuffer* gap = gst_buffer_new();
+  GST_BUFFER_PTS(gap) = pts;
+  GST_BUFFER_DURATION(gap) =
+    GST_CLOCK_TIME_IS_VALID(end) ? end - pts : GST_CLOCK_TIME_NONE;
+  GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
+  GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
+  if (flags & GST_GAP_FLAG_MISSING_DATA)
+    gst_buffer_add_custom_meta(gap, "GstAggregatorMissingDataMeta");
+
+  return gst_pad_chain(GST_PAD(pad), gap);
+}
+
 static gboolean
 gst_gpac_tf_sink_event(GstAggregator* agg,
                        GstAggregatorPad* pad,
@@ -1287,6 +1341,8 @@ gst_gpac_tf_class_init(GstGpacTransformClass* klass)
 
   // Set the aggregator functions
   gstaggregator_class->sink_event = GST_DEBUG_FUNCPTR(gst_gpac_tf_sink_event);
+  gstaggregator_class->sink_event_pre_queue =
+    GST_DEBUG_FUNCPTR(gst_gpac_tf_sink_event_pre_queue);
   gstaggregator_class->aggregate = GST_DEBUG_FUNCPTR(gst_gpac_tf_aggregate);
   gstaggregator_class->get_next_time =
     GST_DEBUG_FUNCPTR(gst_gpac_tf_get_next_time);
@@ -1318,6 +1374,7 @@ gst_gpac_tf_subclass_init(GstGpacTransformClass* klass)
                                 GPAC_PROP_AGGREGATION_DEADLINE,
                                 GPAC_PROP_WEBVTT_SAMPLES,
                                 GPAC_PROP_VTT_CUE_SETTINGS,
+                                GPAC_PROP_DRAIN_GAPS,
                                 GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates
