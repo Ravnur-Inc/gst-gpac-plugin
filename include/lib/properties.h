@@ -33,6 +33,7 @@ typedef struct
   gchar* graph;
   gboolean print_stats;
   gboolean sync;
+  guint aggregation_deadline_ms;
   gchar* destination;
   GList* properties;
   GList* blacklist;
@@ -51,6 +52,7 @@ typedef enum
   GPAC_PROP_PRINT_STATS,
   GPAC_PROP_SYNC,
   GPAC_PROP_DESTINATION,
+  GPAC_PROP_AGGREGATION_DEADLINE,
 
   // Element-specific properties
   GPAC_PROP_ELEMENT_OFFSET,

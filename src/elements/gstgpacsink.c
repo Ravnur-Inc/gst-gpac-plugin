@@ -207,7 +207,11 @@ gst_gpac_sink_subclass_init(GstGpacSinkClass* klass)
   // Set the property handlers
   gpac_install_global_properties(gobject_class);
   gpac_install_local_properties(
-    gobject_class, GPAC_PROP_PRINT_STATS, GPAC_PROP_SYNC, GPAC_PROP_0);
+    gobject_class,
+    GPAC_PROP_PRINT_STATS,
+    GPAC_PROP_SYNC,
+    GPAC_PROP_AGGREGATION_DEADLINE,
+    GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates
   if (params->is_single) {
