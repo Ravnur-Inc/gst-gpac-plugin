@@ -24,6 +24,7 @@
  */
 
 #include "lib/properties.h"
+#include <string.h>
 #include "gpacmessages.h"
 #include <gpac/filters.h>
 
@@ -389,10 +390,20 @@ gpac_set_property(GPAC_PropertyContext* ctx,
       case GPAC_PROP_WEBVTT_SAMPLES:
         ctx->webvtt_samples = g_value_get_boolean(value);
         break;
-      case GPAC_PROP_VTT_CUE_SETTINGS:
+      case GPAC_PROP_VTT_CUE_SETTINGS: {
+        // The settings go on the cue's timing line: a line break or "-->"
+        // would end it and corrupt the WebVTT output
+        const gchar* settings = g_value_get_string(value);
         g_free(ctx->vtt_cue_settings);
-        ctx->vtt_cue_settings = g_value_dup_string(value);
+        ctx->vtt_cue_settings = NULL;
+        if (settings && (strpbrk(settings, "\r\n") || strstr(settings, "-->")))
+          g_warning("Ignoring vtt-cue-settings with a line break or \"-->\": "
+                    "\"%s\"",
+                    settings);
+        else
+          ctx->vtt_cue_settings = g_strdup(settings);
         break;
+      }
       case GPAC_PROP_DRAIN_GAPS:
         ctx->drain_gaps = g_value_get_boolean(value);
         break;

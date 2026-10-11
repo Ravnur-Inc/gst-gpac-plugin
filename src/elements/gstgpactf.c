@@ -804,6 +804,31 @@ gst_gpac_tf_write_box_header(guint8* data, gsize size, const char* type)
   memcpy(data + 4, type, 4);
 }
 
+// The lines of a text buffer as a WebVTT cue payload: without empty lines or
+// carriage returns, without a terminating NUL, and with "-->" written as
+// "--&gt;", which renders the same.
+static GString*
+gst_gpac_tf_cue_payload(const guint8* data, gsize size)
+{
+  GString* text = g_string_sized_new(size);
+  for (gsize i = 0; i < size && data[i] != '\0'; i++) {
+    char c = (char)data[i];
+    if (c == '\r')
+      continue;
+    if (c == '\n' && (text->len == 0 || text->str[text->len - 1] == '\n'))
+      continue;
+    if (c == '>' && text->len >= 2 && text->str[text->len - 1] == '-' &&
+        text->str[text->len - 2] == '-') {
+      g_string_append(text, "&gt;");
+      continue;
+    }
+    g_string_append_c(text, c);
+  }
+  while (text->len && text->str[text->len - 1] == '\n')
+    g_string_truncate(text, text->len - 1);
+  return text;
+}
+
 static GstBuffer*
 gst_gpac_tf_text_to_webvtt(GstBuffer* buffer, const gchar* settings)
 {
@@ -820,12 +845,12 @@ gst_gpac_tf_text_to_webvtt(GstBuffer* buffer, const gchar* settings)
     if (!gst_buffer_map(buffer, &map, GST_MAP_READ))
       return NULL;
 
-    // The payload box carries the text without a terminating NUL
-    gsize text_size = map.size;
-    while (text_size && map.data[text_size - 1] == '\0')
-      text_size--;
-    if (!text_size)
+    // The text as a WebVTT cue payload: written out, an empty line would end
+    // the cue and "-->" would be read as a timing line
+    g_autoptr(GString) text = gst_gpac_tf_cue_payload(map.data, map.size);
+    if (!text->len)
       return NULL;
+    gsize text_size = text->len;
 
     gsize settings_len = settings && *settings ? strlen(settings) : 0;
     gsize sttg_size = settings_len ? 8 + settings_len : 0;
@@ -841,7 +866,7 @@ gst_gpac_tf_text_to_webvtt(GstBuffer* buffer, const gchar* settings)
       box += sttg_size;
     }
     gst_gpac_tf_write_box_header(box, payl_size, "payl");
-    memcpy(box + 8, map.data, text_size);
+    memcpy(box + 8, text->str, text_size);
     sample = gst_buffer_new_wrapped(data, size);
   }
 

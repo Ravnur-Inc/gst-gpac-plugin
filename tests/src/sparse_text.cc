@@ -291,3 +291,36 @@ TEST_F(GstTestFixture, DrainGapsKeepsCuesInOrder)
     EXPECT_EQ(text, "burst") << timing << "\n" << vtt;
   EXPECT_GE(sparse.TextSegments(), 3);
 }
+
+TEST_F(GstTestFixture, WebVttCueTextAndSettingsCannotBreakTheCue)
+{
+  SparseTextPipeline sparse(
+    pipeline, 2, "dasher:segdur=1.0:dmode=dynamic:rawsub=true");
+  g_object_set(sparse.sink,
+               "aggregation-deadline",
+               100,
+               "webvtt-samples",
+               TRUE,
+               NULL);
+
+  // A line break would end the timing line: the settings are refused
+  g_object_set(sparse.sink, "vtt-cue-settings", "line:-2\nalign:left", NULL);
+  gchar* settings = NULL;
+  g_object_get(sparse.sink, "vtt-cue-settings", &settings, NULL);
+  EXPECT_EQ(settings, nullptr);
+  g_free(settings);
+
+  this->StartPipeline();
+  // An empty line would end the cue, and "-->" read as a timing line
+  sparse.PushText("first\r\n\nsecond --> third\n", 200 * GST_MSECOND,
+                  600 * GST_MSECOND);
+  sparse.PushGap(800 * GST_MSECOND, 1200 * GST_MSECOND);
+  g_usleep(2 * G_USEC_PER_SEC);
+  sparse.EndText();
+  this->WaitForEOS();
+
+  std::string vtt = sparse.Text();
+  EXPECT_NE(vtt.find("\nfirst\nsecond --&gt; third\n\n"), std::string::npos)
+    << vtt;
+  EXPECT_EQ(ParseCues(vtt).size(), 1u) << vtt;
+}
