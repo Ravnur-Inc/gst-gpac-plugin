@@ -227,3 +227,34 @@ TEST_F(GstTestFixture, WebVttSamplesCarryCuesAndGaps)
   // The text track is segmented all the way, not only up to the last cue
   EXPECT_GE(sparse.TextSegments(), 5);
 }
+
+TEST_F(GstTestFixture, VttCueSettingsGivenToEveryCue)
+{
+  SparseTextPipeline sparse(
+    pipeline, 3, "dasher:segdur=1.0:dmode=dynamic:rawsub=true");
+  g_object_set(sparse.sink,
+               "aggregation-deadline",
+               100,
+               "webvtt-samples",
+               TRUE,
+               "vtt-cue-settings",
+               "align:left position:10% line:-2",
+               NULL);
+  this->StartPipeline();
+
+  sparse.PushText("one", 200 * GST_MSECOND, 600 * GST_MSECOND);
+  sparse.PushGap(800 * GST_MSECOND, 700 * GST_MSECOND);
+  sparse.PushText("two", 1500 * GST_MSECOND, GST_SECOND);
+  sparse.PushGap(2500 * GST_MSECOND, 500 * GST_MSECOND);
+  g_usleep(3 * G_USEC_PER_SEC);
+  sparse.EndText();
+  this->WaitForEOS();
+
+  std::string vtt = sparse.Text();
+  auto cues = ParseCues(vtt);
+  EXPECT_GE(cues.size(), 2u) << vtt;
+  for (auto& [timing, text] : cues)
+    EXPECT_NE(timing.find(" align:left position:10% line:-2"),
+              std::string::npos)
+      << timing;
+}

@@ -145,6 +145,20 @@ gpac_install_local_properties(GObjectClass* gobject_class,
             G_PARAM_READWRITE));
         break;
 
+      case GPAC_PROP_VTT_CUE_SETTINGS:
+        g_object_class_install_property(
+          gobject_class,
+          prop,
+          g_param_spec_string(
+            "vtt-cue-settings",
+            "WebVTT Cue Settings",
+            "WebVTT cue settings given to every cue sent with webvtt-samples, "
+            "for example \"align:left position:10% line:-2\". Set it before "
+            "the element starts",
+            NULL,
+            G_PARAM_READWRITE));
+        break;
+
       case GPAC_PROP_DESTINATION:
         g_object_class_install_property(
           gobject_class,
@@ -360,6 +374,10 @@ gpac_set_property(GPAC_PropertyContext* ctx,
       case GPAC_PROP_WEBVTT_SAMPLES:
         ctx->webvtt_samples = g_value_get_boolean(value);
         break;
+      case GPAC_PROP_VTT_CUE_SETTINGS:
+        g_free(ctx->vtt_cue_settings);
+        ctx->vtt_cue_settings = g_value_dup_string(value);
+        break;
       case GPAC_PROP_DESTINATION:
         g_free(ctx->destination);
         ctx->destination = g_value_dup_string(value);
@@ -441,6 +459,9 @@ gpac_get_property(GPAC_PropertyContext* ctx,
         break;
       case GPAC_PROP_WEBVTT_SAMPLES:
         g_value_set_boolean(value, ctx->webvtt_samples);
+        break;
+      case GPAC_PROP_VTT_CUE_SETTINGS:
+        g_value_set_string(value, ctx->vtt_cue_settings);
         break;
       case GPAC_PROP_DESTINATION:
         g_value_set_string(value, ctx->destination);

@@ -735,7 +735,8 @@ gst_gpac_tf_get_next_time(GstAggregator* agg)
 
 // With `webvtt-samples`, wraps a text buffer into a WebVTT sample as stored in
 // ISOBMFF (ISO/IEC 14496-30): a buffer of text becomes a cue box (vttc) that
-// holds the text (payl), and a gap buffer with a duration becomes an empty
+// holds the text (payl) and, when given, the cue settings (sttg), and a gap
+// buffer with a duration becomes an empty
 // sample (vtte). The empty sample lets GPAC know that the text track has
 // advanced although no cue is shown: GPAC's dasher closes a text segment only
 // on a sample at or past the segment's end, and a gap buffer would otherwise
@@ -749,7 +750,7 @@ gst_gpac_tf_write_box_header(guint8* data, gsize size, const char* type)
 }
 
 static GstBuffer*
-gst_gpac_tf_text_to_webvtt(GstBuffer* buffer)
+gst_gpac_tf_text_to_webvtt(GstBuffer* buffer, const gchar* settings)
 {
   GstBuffer* sample;
 
@@ -771,12 +772,21 @@ gst_gpac_tf_text_to_webvtt(GstBuffer* buffer)
     if (!text_size)
       return NULL;
 
+    gsize settings_len = settings && *settings ? strlen(settings) : 0;
+    gsize sttg_size = settings_len ? 8 + settings_len : 0;
     gsize payl_size = 8 + text_size;
-    gsize size = 8 + payl_size;
+    gsize size = 8 + sttg_size + payl_size;
     guint8* data = g_malloc(size);
-    gst_gpac_tf_write_box_header(data, size, "vttc");
-    gst_gpac_tf_write_box_header(data + 8, payl_size, "payl");
-    memcpy(data + 16, map.data, text_size);
+    guint8* box = data;
+    gst_gpac_tf_write_box_header(box, size, "vttc");
+    box += 8;
+    if (sttg_size) {
+      gst_gpac_tf_write_box_header(box, sttg_size, "sttg");
+      memcpy(box + 8, settings, settings_len);
+      box += sttg_size;
+    }
+    gst_gpac_tf_write_box_header(box, payl_size, "payl");
+    memcpy(box + 8, map.data, text_size);
     sample = gst_buffer_new_wrapped(data, size);
   }
 
@@ -845,7 +855,8 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 
           // WebVTT samples for the text track, gaps included
           if (priv->webvtt_samples) {
-            GstBuffer* sample = gst_gpac_tf_text_to_webvtt(buffer);
+            GstBuffer* sample = gst_gpac_tf_text_to_webvtt(
+              buffer, GPAC_PROP_CTX(GPAC_CTX)->vtt_cue_settings);
             gst_buffer_unref(buffer);
             buffer = sample;
             if (!buffer)
@@ -1229,6 +1240,7 @@ gst_gpac_tf_finalize(GObject* object)
   // Free the properties
   g_list_free(ctx->properties);
   ctx->properties = NULL;
+  g_clear_pointer(&ctx->vtt_cue_settings, g_free);
 
   if (ctx->props_as_argv) {
     for (u32 i = 0; ctx->props_as_argv[i]; i++)
@@ -1305,6 +1317,7 @@ gst_gpac_tf_subclass_init(GstGpacTransformClass* klass)
                                 GPAC_PROP_PRINT_STATS,
                                 GPAC_PROP_AGGREGATION_DEADLINE,
                                 GPAC_PROP_WEBVTT_SAMPLES,
+                                GPAC_PROP_VTT_CUE_SETTINGS,
                                 GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates
