@@ -140,7 +140,7 @@ gpac_install_local_properties(GObjectClass* gobject_class,
             "Send text/x-raw input to GPAC as WebVTT samples (ISO/IEC "
             "14496-30) instead of simple text: one cue per buffer, and an "
             "empty sample for every GAP, so that the text track advances while "
-            "no cue is shown. Set it before the element starts",
+            "no cue is shown. Applies to PIDs created after it is set",
             FALSE,
             G_PARAM_READWRITE));
         break;

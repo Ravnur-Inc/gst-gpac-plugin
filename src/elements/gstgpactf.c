@@ -238,13 +238,14 @@ gpac_prepare_pids(GstElement* element)
 
           // Share the pad private data
           gf_filter_pid_set_udta(pid, priv);
-        }
 
-        // How text reaches GPAC is decided by the element's property
-        priv->webvtt_samples =
-          GPAC_PROP_CTX(GPAC_CTX)->webvtt_samples &&
-          gst_pad_get_pad_template(pad) ==
-            gst_gpac_get_sink_template(GPAC_TEMPLATE_SUBTITLE);
+          // How text reaches GPAC is decided by the element's property, once
+          // per PID: its codec, framing and decoder configuration follow it
+          priv->webvtt_samples =
+            GPAC_PROP_CTX(GPAC_CTX)->webvtt_samples &&
+            GST_PAD_PAD_TEMPLATE(pad) ==
+              gst_gpac_get_sink_template(GPAC_TEMPLATE_SUBTITLE);
+        }
 
         if (priv->flags) {
           if (G_UNLIKELY(!gpac_pid_reconfigure(element, priv, pid))) {
