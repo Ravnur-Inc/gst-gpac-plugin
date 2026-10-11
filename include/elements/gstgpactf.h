@@ -68,10 +68,16 @@ struct _GstGpacTransform
   /* Input Queue */
   GQueue* queue;
 
-  /* Deadline for the next aggregation, in running time.  Refreshed from the
-     clock on every aggregate() call so a sink pad with nothing to give cannot
-     hold the others back indefinitely. */
+  /* Deadline for the next aggregation, in running time, so a sink pad with
+     nothing to give cannot hold the others back indefinitely.  Computed from
+     the clock when the base class next asks for it after an aggregate() call,
+     and again whenever the base time it was computed against changes. */
   GstClockTime next_time;
+  GstClockTime next_time_base;
+
+  /* The aggregator latency as last read in aggregate(): get_next_time() runs
+     with the base class SRC lock held, and reading the latency takes it. */
+  GstClockTime latency;
 
   /* Sacrificial Buffer (for syncing) */
   GstBuffer* sync_buffer;

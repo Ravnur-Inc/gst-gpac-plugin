@@ -665,12 +665,6 @@ request:
       agg, STREAM, FAILED, (NULL), ("Failed to push the force key unit event"));
 }
 
-// How long the element may wait for a sink pad that has nothing to give before
-// aggregating without it.  Deadline-based aggregation is computed from the
-// clock rather than from a media position: this element sinks data and has no
-// output position of its own to advance.
-#define GPAC_TF_AGGREGATE_DEADLINE (100 * GST_MSECOND)
-
 static GstClockTime
 gst_gpac_tf_running_time(GstAggregator* agg)
 {
@@ -691,24 +685,46 @@ gst_gpac_tf_running_time(GstAggregator* agg)
   return now - base;
 }
 
+// The next deadline, in running time: `aggregation-deadline` from now.  The
+// base class waits until deadline + pipeline latency, so the latency is taken
+// off here: a pipeline with a latency of several seconds (live transcription,
+// for example) would otherwise push the deadline past the data it is meant to
+// release.  Computed from the clock rather than from a media position: this
+// element sinks data and has no output position of its own to advance.
 static GstClockTime
 gst_gpac_tf_get_next_time(GstAggregator* agg)
 {
   GstGpacTransform* gpac_tf = GST_GPAC_TF(GST_ELEMENT(agg));
+  guint deadline_ms = GPAC_PROP_CTX(GPAC_CTX)->aggregation_deadline_ms;
 
-  // Without this the base class waits for a buffer on *every* pad before it
-  // aggregates, with no timeout, so the slowest producer sets the cadence for
-  // all of them.  A sparse subtitle track then starves audio and video: they
-  // fill their pads to the aggregator's per-pad capacity and their chains park
-  // until the next subtitle buffer arrives, after which everything queued is
-  // admitted at once.
-  if (!GST_CLOCK_TIME_IS_VALID(gpac_tf->next_time)) {
-    GstClockTime now = gst_gpac_tf_running_time(agg);
-    if (GST_CLOCK_TIME_IS_VALID(now))
-      gpac_tf->next_time = now + GPAC_TF_AGGREGATE_DEADLINE;
-  }
+  // Without a deadline the base class waits for a buffer on *every* pad before
+  // it aggregates, with no timeout, so the slowest producer sets the cadence
+  // for all of them.  A sparse subtitle track then starves audio and video:
+  // they fill their pads to the aggregator's per-pad capacity and their chains
+  // park until the next subtitle buffer arrives, after which everything queued
+  // is admitted at once.
+  if (deadline_ms == 0)
+    return GST_CLOCK_TIME_NONE;
 
-  return gpac_tf->next_time;
+  // The deadline is kept until the next aggregate() so the wait can expire.
+  // It is recomputed when the base time moves: a value computed before the
+  // element got its PLAYING base time is an absolute clock time, and waiting
+  // for base + that would never return.
+  GstClockTime base = gst_element_get_base_time(GST_ELEMENT(agg));
+  if (GST_CLOCK_TIME_IS_VALID(gpac_tf->next_time) &&
+      base == gpac_tf->next_time_base)
+    return gpac_tf->next_time;
+
+  GstClockTime now = gst_gpac_tf_running_time(agg);
+  if (!GST_CLOCK_TIME_IS_VALID(now))
+    return GST_CLOCK_TIME_NONE;
+
+  GstClockTime deadline = now + deadline_ms * GST_MSECOND;
+  if (GST_CLOCK_TIME_IS_VALID(gpac_tf->latency))
+    deadline = deadline > gpac_tf->latency ? deadline - gpac_tf->latency : 0;
+  gpac_tf->next_time = deadline;
+  gpac_tf->next_time_base = base;
+  return deadline;
 }
 
 static GstFlowReturn
@@ -728,14 +744,11 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 
   GST_DEBUG_OBJECT(agg, "Aggregating buffers");
 
-  // Move the deadline forward, whether this call came from the deadline or
-  // from every pad being ready.
-  {
-    GstClockTime now = gst_gpac_tf_running_time(agg);
-    gpac_tf->next_time = GST_CLOCK_TIME_IS_VALID(now)
-                           ? now + GPAC_TF_AGGREGATE_DEADLINE
-                           : GST_CLOCK_TIME_NONE;
-  }
+  // Start a new deadline, whether this call came from the deadline or from
+  // every pad being ready.  The latency is read here because get_next_time()
+  // cannot take the lock it needs.
+  gpac_tf->latency = gst_aggregator_get_latency(agg);
+  gpac_tf->next_time = GST_CLOCK_TIME_NONE;
 
   // Create the temporary queue
   GQueue* queue = g_queue_new();
@@ -1167,6 +1180,8 @@ gst_gpac_tf_init(GstGpacTransform* tf)
   gst_gpac_tf_reset(tf);
   tf->queue = g_queue_new();
   tf->next_time = GST_CLOCK_TIME_NONE;
+  tf->next_time_base = GST_CLOCK_TIME_NONE;
+  tf->latency = GST_CLOCK_TIME_NONE;
 }
 
 static void
@@ -1213,8 +1228,10 @@ gst_gpac_tf_subclass_init(GstGpacTransformClass* klass)
   gobject_class->set_property = GST_DEBUG_FUNCPTR(gst_gpac_tf_set_property);
   gobject_class->get_property = GST_DEBUG_FUNCPTR(gst_gpac_tf_get_property);
   gpac_install_global_properties(gobject_class);
-  gpac_install_local_properties(
-    gobject_class, GPAC_PROP_PRINT_STATS, GPAC_PROP_0);
+  gpac_install_local_properties(gobject_class,
+                                GPAC_PROP_PRINT_STATS,
+                                GPAC_PROP_AGGREGATION_DEADLINE,
+                                GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates
   if (params->is_single) {
