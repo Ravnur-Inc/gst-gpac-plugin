@@ -800,7 +800,11 @@ gst_gpac_tf_get_next_time(GstAggregator* agg)
 static void
 gst_gpac_tf_write_box_header(guint8* data, gsize size, const char* type)
 {
-  GST_WRITE_UINT32_BE(data, (guint32)size);
+  // Byte by byte: a box can start at any offset in the sample
+  data[0] = (guint8)(size >> 24);
+  data[1] = (guint8)(size >> 16);
+  data[2] = (guint8)(size >> 8);
+  data[3] = (guint8)size;
   memcpy(data + 4, type, 4);
 }
 
