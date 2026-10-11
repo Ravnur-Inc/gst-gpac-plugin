@@ -238,6 +238,13 @@ gpac_prepare_pids(GstElement* element)
 
           // Share the pad private data
           gf_filter_pid_set_udta(pid, priv);
+
+          // How text reaches GPAC is decided by the element's property, once
+          // per PID: its codec, framing and decoder configuration follow it
+          priv->webvtt_samples =
+            GPAC_PROP_CTX(GPAC_CTX)->webvtt_samples &&
+            GST_PAD_PAD_TEMPLATE(pad) ==
+              gst_gpac_get_sink_template(GPAC_TEMPLATE_SUBTITLE);
         }
 
         if (priv->flags) {
@@ -727,6 +734,105 @@ gst_gpac_tf_get_next_time(GstAggregator* agg)
   return deadline;
 }
 
+// Writes an ISOBMFF box header: the box size, then its four-character type.
+static void
+gst_gpac_tf_write_box_header(guint8* data, gsize size, const char* type)
+{
+  // Byte by byte: a box can start at any offset in the sample
+  data[0] = (guint8)(size >> 24);
+  data[1] = (guint8)(size >> 16);
+  data[2] = (guint8)(size >> 8);
+  data[3] = (guint8)size;
+  memcpy(data + 4, type, 4);
+}
+
+// The plain text of a buffer as a WebVTT cue payload: without empty lines or
+// carriage returns, without a terminating NUL, with "&" and "<" escaped, and
+// "-->" written as "--&gt;"; all of them render as the text they replace.
+static GString*
+gst_gpac_tf_cue_payload(const guint8* data, gsize size)
+{
+  GString* text = g_string_sized_new(size);
+  for (gsize i = 0; i < size && data[i] != '\0'; i++) {
+    char c = (char)data[i];
+    if (c == '\r')
+      continue;
+    if (c == '\n' && (text->len == 0 || text->str[text->len - 1] == '\n'))
+      continue;
+    if (c == '&') {
+      g_string_append(text, "&amp;");
+      continue;
+    }
+    if (c == '<') {
+      g_string_append(text, "&lt;");
+      continue;
+    }
+    if (c == '>' && text->len >= 2 && text->str[text->len - 1] == '-' &&
+        text->str[text->len - 2] == '-') {
+      g_string_append(text, "&gt;");
+      continue;
+    }
+    g_string_append_c(text, c);
+  }
+  while (text->len && text->str[text->len - 1] == '\n')
+    g_string_truncate(text, text->len - 1);
+  return text;
+}
+
+// With `webvtt-samples`, wraps a text buffer into a WebVTT sample as stored in
+// ISOBMFF (ISO/IEC 14496-30): a buffer of text becomes a cue box (vttc) that
+// holds the text (payl); a gap buffer, or a buffer with no text, becomes an
+// empty sample (vtte) over its duration.
+// The empty sample lets GPAC know that the text track has advanced although no
+// cue is shown: GPAC's dasher closes a text segment only on a sample at or past
+// the segment's end, and a gap buffer would otherwise never reach it. GPAC
+// writes no cue for an empty sample. Returns NULL for a buffer without a
+// duration that carries no text.
+static GstBuffer*
+gst_gpac_tf_text_to_webvtt(GstBuffer* buffer)
+{
+  GstBuffer* sample;
+  g_autoptr(GString) text = NULL;
+
+  // The text as a WebVTT cue payload: written out, an empty line would end
+  // the cue and "-->" would be read as a timing line
+  if (!GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_GAP)) {
+    g_auto(GstBufferMapInfo) map = GST_MAP_INFO_INIT;
+    if (!gst_buffer_map(buffer, &map, GST_MAP_READ))
+      return NULL;
+    text = gst_gpac_tf_cue_payload(map.data, map.size);
+  }
+
+  if (!text || !text->len) {
+    // A gap, or no text to show: an empty sample over its duration
+    if (!GST_BUFFER_DURATION_IS_VALID(buffer) || !GST_BUFFER_DURATION(buffer))
+      return NULL;
+    guint8* data = g_malloc(8);
+    gst_gpac_tf_write_box_header(data, 8, "vtte");
+    sample = gst_buffer_new_wrapped(data, 8);
+  } else {
+    gsize text_size = text->len;
+
+    gsize payl_size = 8 + text_size;
+    gsize size = 8 + payl_size;
+    guint8* data = g_malloc(size);
+    gst_gpac_tf_write_box_header(data, size, "vttc");
+    gst_gpac_tf_write_box_header(data + 8, payl_size, "payl");
+    memcpy(data + 16, text->str, text_size);
+    sample = gst_buffer_new_wrapped(data, size);
+  }
+
+  gst_buffer_copy_into(sample,
+                       buffer,
+                       GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                         GST_BUFFER_COPY_META,
+                       0,
+                       -1);
+  GST_BUFFER_FLAG_UNSET(sample, GST_BUFFER_FLAG_GAP);
+  GST_BUFFER_FLAG_UNSET(sample, GST_BUFFER_FLAG_DROPPABLE);
+  return sample;
+}
+
 static gboolean
 gst_gpac_tf_pad_is_eos(GstElement* element, GstPad* pad, gpointer user_data)
 {
@@ -798,6 +904,15 @@ gst_gpac_tf_aggregate(GstAggregator* agg, gboolean timeout)
 
           // We found at least one buffer, continue the outer loop
           has_buffers = TRUE;
+
+          // WebVTT samples for the text track, gaps included
+          if (priv->webvtt_samples) {
+            GstBuffer* sample = gst_gpac_tf_text_to_webvtt(buffer);
+            gst_buffer_unref(buffer);
+            buffer = sample;
+            if (!buffer)
+              goto next;
+          }
 
           // Skip droppable/gap buffers
           if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_GAP)) {
@@ -1251,6 +1366,7 @@ gst_gpac_tf_subclass_init(GstGpacTransformClass* klass)
   gpac_install_local_properties(gobject_class,
                                 GPAC_PROP_PRINT_STATS,
                                 GPAC_PROP_AGGREGATION_DEADLINE,
+                                GPAC_PROP_WEBVTT_SAMPLES,
                                 GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates

@@ -71,6 +71,10 @@ typedef struct
   // Capabilities required for the PID
   GList* gpac_caps;
   gboolean caps_changed;
+
+  // Text is sent as WebVTT samples (`webvtt-samples`) instead of simple text,
+  // fixed for the PID
+  gboolean webvtt_samples;
 } GpacPadPrivate;
 
 #define GPAC_PID_PROP_IMPL_ARGS_NO_ELEMENT \

@@ -129,6 +129,21 @@ gpac_install_local_properties(GObjectClass* gobject_class,
             G_PARAM_READWRITE));
         break;
 
+      case GPAC_PROP_WEBVTT_SAMPLES:
+        g_object_class_install_property(
+          gobject_class,
+          prop,
+          g_param_spec_boolean(
+            "webvtt-samples",
+            "WebVTT Samples",
+            "Send text/x-raw input to GPAC as WebVTT samples (ISO/IEC "
+            "14496-30) instead of simple text: one cue per buffer, and an "
+            "empty sample for every GAP, so that the text track advances while "
+            "no cue is shown. Applies to PIDs created after it is set",
+            FALSE,
+            G_PARAM_READWRITE));
+        break;
+
       case GPAC_PROP_DESTINATION:
         g_object_class_install_property(
           gobject_class,
@@ -345,6 +360,9 @@ gpac_set_property(GPAC_PropertyContext* ctx,
       case GPAC_PROP_AGGREGATION_DEADLINE:
         ctx->aggregation_deadline_ms = g_value_get_uint(value);
         break;
+      case GPAC_PROP_WEBVTT_SAMPLES:
+        ctx->webvtt_samples = g_value_get_boolean(value);
+        break;
       case GPAC_PROP_DESTINATION:
         g_free(ctx->destination);
         ctx->destination = g_value_dup_string(value);
@@ -423,6 +441,9 @@ gpac_get_property(GPAC_PropertyContext* ctx,
         break;
       case GPAC_PROP_AGGREGATION_DEADLINE:
         g_value_set_uint(value, ctx->aggregation_deadline_ms);
+        break;
+      case GPAC_PROP_WEBVTT_SAMPLES:
+        g_value_set_boolean(value, ctx->webvtt_samples);
         break;
       case GPAC_PROP_DESTINATION:
         g_value_set_string(value, ctx->destination);
