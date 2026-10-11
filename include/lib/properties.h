@@ -34,6 +34,7 @@ typedef struct
   gboolean print_stats;
   gboolean sync;
   guint aggregation_deadline_ms;
+  gboolean webvtt_samples;
   gchar* destination;
   GList* properties;
   GList* blacklist;
@@ -53,6 +54,7 @@ typedef enum
   GPAC_PROP_SYNC,
   GPAC_PROP_DESTINATION,
   GPAC_PROP_AGGREGATION_DEADLINE,
+  GPAC_PROP_WEBVTT_SAMPLES,
 
   // Element-specific properties
   GPAC_PROP_ELEMENT_OFFSET,

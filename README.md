@@ -26,6 +26,7 @@ The `gpactf` element is an aggregator element that runs the incoming buffers thr
 Like any `GstAggregator`, the element waits for a buffer on every sink pad before it aggregates. A sparse track — live captions, for example — can leave its pad empty for seconds, and the other tracks then wait for it inside the element. These options, available on every `gpactf` based element and on `gpacsink`, let such a track run alongside audio and video:
 
 - **`aggregation-deadline`** (milliseconds, default `0`): in a live pipeline, aggregate whatever the sink pads hold once this long (wall-clock time) has passed since the last aggregation, instead of waiting for a buffer on every pad. `0` waits for every pad.
+- **`webvtt-samples`** (boolean, default `false`): send `text/x-raw` input to GPAC as WebVTT samples instead of simple text, so the text track can go straight to the `dasher` (no `txtin`/`tx3g2vtt` conversion). Each buffer becomes one cue, and each GAP with a duration an empty sample: GPAC's `dasher` closes a text segment only once it has a sample at or past the segment's end, so without them the segment holding the last cue stays open until the next cue arrives. Use it with `aggregation-deadline` for live captions: with simple text, a text track that only advances on cues lags the other tracks in the `dasher`.
 
 
 ### `gpacmp4mx` element
