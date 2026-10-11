@@ -73,8 +73,9 @@ typedef struct
   gboolean caps_changed;
 
   // Text is sent as WebVTT samples (`webvtt-samples`) instead of simple text,
-  // fixed for the PID
+  // with these cue settings (`vtt-cue-settings`); both fixed for the PID
   gboolean webvtt_samples;
+  gchar* vtt_cue_settings;
 } GpacPadPrivate;
 
 #define GPAC_PID_PROP_IMPL_ARGS_NO_ELEMENT \

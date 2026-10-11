@@ -27,6 +27,7 @@ Like any `GstAggregator`, the element waits for a buffer on every sink pad befor
 
 - **`aggregation-deadline`** (milliseconds, default `0`): in a live pipeline, aggregate whatever the sink pads hold once this long (wall-clock time) has passed since the last aggregation, instead of waiting for a buffer on every pad. `0` waits for every pad.
 - **`webvtt-samples`** (boolean, default `false`): send `text/x-raw` input to GPAC as WebVTT samples instead of simple text, so the text track can go straight to the `dasher` (no `txtin`/`tx3g2vtt` conversion). Each buffer becomes one cue, and each GAP with a duration an empty sample: GPAC's `dasher` closes a text segment only once it has a sample at or past the segment's end, so without them the segment holding the last cue stays open until the next cue arrives. Use it with `aggregation-deadline` for live captions: with simple text, a text track that only advances on cues lags the other tracks in the `dasher`.
+- **`vtt-cue-settings`** (string, default none): with `webvtt-samples`, [WebVTT cue settings](https://www.w3.org/TR/webvtt1/#webvtt-cue-settings) given to every cue, for example `align:left position:10% line:-2`.
 
 
 ### `gpacmp4mx` element
