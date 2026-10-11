@@ -176,3 +176,43 @@ TEST_F(GstTestFixture, AggregationDeadlineWithSilentTextPad)
   sparse.EndText();
   this->WaitForEOS();
 }
+
+TEST_F(GstTestFixture, NoEosWhileAPadHoldsOnlyAGap)
+{
+  // A text track alone, its first item a GAP: the pass that consumes it
+  // produces no packet, which is not the end of the stream
+  GstElement* text_src = gst_element_factory_make_full(
+    "appsrc",
+    "format",
+    GST_FORMAT_TIME,
+    "caps",
+    gst_caps_from_string("text/x-raw,format=utf8"),
+    NULL);
+  GstElement* sink = gst_element_factory_make_full(
+    "gpacsink", "graph", "dasher:segdur=1.0", "destination", "out.mpd", NULL);
+  gst_bin_add_many(GST_BIN(pipeline), text_src, sink, NULL);
+  GstPad* text_pad = gst_element_request_pad_simple(sink, "subtitle_%u");
+  GstPad* src_pad = gst_element_get_static_pad(text_src, "src");
+  ASSERT_EQ(gst_pad_link(src_pad, text_pad), GST_PAD_LINK_OK);
+  gst_object_unref(src_pad);
+  gst_object_unref(text_pad);
+  this->StartPipeline();
+
+  gst_element_send_event(text_src, gst_event_new_gap(0, GST_SECOND));
+  GstBus* bus = gst_element_get_bus(pipeline);
+  GstMessage* eos =
+    gst_bus_timed_pop_filtered(bus, 2 * GST_SECOND, GST_MESSAGE_EOS);
+  EXPECT_EQ(eos, nullptr) << "EOS before the text track ended";
+  if (eos)
+    gst_message_unref(eos);
+  gst_object_unref(bus);
+
+  // The stream goes on: a caption, then the end
+  GstBuffer* text = gst_buffer_new_memdup("late", 4);
+  GST_BUFFER_PTS(text) = GST_SECOND;
+  GST_BUFFER_DURATION(text) = GST_SECOND;
+  GstFlowReturn ret;
+  g_signal_emit_by_name(text_src, "push-buffer", text, &ret);
+  gst_buffer_unref(text);
+  g_signal_emit_by_name(text_src, "end-of-stream", &ret);
+}
