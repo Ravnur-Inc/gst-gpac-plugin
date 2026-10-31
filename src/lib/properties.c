@@ -145,6 +145,21 @@ gpac_install_local_properties(GObjectClass* gobject_class,
             G_PARAM_READWRITE));
         break;
 
+      case GPAC_PROP_DISABLE_IDR_REQUESTS:
+        g_object_class_install_property(
+          gobject_class,
+          prop,
+          g_param_spec_boolean(
+            "disable-idr-requests",
+            "Disable IDR Requests",
+            "Do not ask upstream for a key frame at every segment boundary. "
+            "For an encoder that already places its key frames on the segment "
+            "grid, or for input that is not encoded here at all (nothing "
+            "upstream can honour the request)",
+            FALSE,
+            G_PARAM_READWRITE));
+        break;
+
       case GPAC_PROP_VTT_CUE_SETTINGS:
         g_object_class_install_property(
           gobject_class,
@@ -374,6 +389,9 @@ gpac_set_property(GPAC_PropertyContext* ctx,
       case GPAC_PROP_WEBVTT_SAMPLES:
         ctx->webvtt_samples = g_value_get_boolean(value);
         break;
+      case GPAC_PROP_DISABLE_IDR_REQUESTS:
+        ctx->disable_idr_requests = g_value_get_boolean(value);
+        break;
       case GPAC_PROP_VTT_CUE_SETTINGS: {
         // The settings go on the cue's timing line: a line break or "-->"
         // would end it and corrupt the WebVTT output
@@ -470,6 +488,9 @@ gpac_get_property(GPAC_PropertyContext* ctx,
         break;
       case GPAC_PROP_WEBVTT_SAMPLES:
         g_value_set_boolean(value, ctx->webvtt_samples);
+        break;
+      case GPAC_PROP_DISABLE_IDR_REQUESTS:
+        g_value_set_boolean(value, ctx->disable_idr_requests);
         break;
       case GPAC_PROP_VTT_CUE_SETTINGS:
         g_value_set_string(value, ctx->vtt_cue_settings);

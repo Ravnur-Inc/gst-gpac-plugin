@@ -615,6 +615,10 @@ gst_gpac_request_idr(GstAggregator* agg, GstPad* pad, GstBuffer* buffer)
   GpacPadPrivate* priv = gst_pad_get_element_private(pad);
   GstEvent* gst_event;
 
+  // Skip if nothing upstream is asked to place key frames
+  if (GPAC_PROP_CTX(GPAC_CTX)->disable_idr_requests)
+    return;
+
   // Skip if this is not a key frame
   if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT))
     return;
@@ -1397,6 +1401,7 @@ gst_gpac_tf_subclass_init(GstGpacTransformClass* klass)
                                 GPAC_PROP_AGGREGATION_DEADLINE,
                                 GPAC_PROP_WEBVTT_SAMPLES,
                                 GPAC_PROP_VTT_CUE_SETTINGS,
+                                GPAC_PROP_DISABLE_IDR_REQUESTS,
                                 GPAC_PROP_0);
 
   // Add the subclass-specific properties and pad templates
